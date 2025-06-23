@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Login Atendente</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center h-screen">
+  <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-sm">
+    <h1 class="text-2xl font-bold mb-4 text-center">Login do Atendente</h1>
+
+    <form id="form" class="space-y-4">
+      <div>
+        <label for="nome" class="block text-sm font-medium">Nome:</label>
+        <input type="text" id="nome" required class="w-full px-4 py-2 border rounded-lg">
+      </div>
+
+      <div>
+        <label for="departamento" class="block text-sm font-medium">Departamento:</label>
+        <select id="departamento" required class="w-full px-4 py-2 border rounded-lg">
+          <option value="">Selecione...</option>
+          <option value="Financeiro">Financeiro</option>
+          <option value="Suporte">Suporte</option>
+          <option value="Comercial">Comercial</option>
+        </select>
+      </div>
+
+      <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+        Entrar
+      </button>
+    </form>
+  </div>
+
+  <script>
+    document.getElementById('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const nome = document.getElementById('nome').value.trim();
+      const departamento = document.getElementById('departamento').value;
+
+      if (nome && departamento) {
+        localStorage.setItem('nome_atendente', nome);
+        localStorage.setItem('departamento_atendente', departamento);
+        window.location.href = '/frontend/atendente.html';
+      }
+    });
+  </script>
+</body>
+</html>

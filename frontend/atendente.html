@@ -1,0 +1,304 @@
+<!-- atendimento.html – versão consolidada -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painel do Atendente</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- CSS principal -->
+  <link rel="stylesheet" href="/frontend/style.css" />
+
+  <!-- Fallback rápido: espaçamento + avatar -->
+  <style>
+    /* espaço entre bolhas */
+    #historico > .msg-row + .msg-row,
+    .msg-row + .msg-row { margin-top: 6px; }
+
+    /* avatar em lista, cabeçalho e drawer */
+    .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans select-none">
+  <div class="flex h-screen">
+    <!-- 📋 Lista de chats -->
+    <aside class="w-1/4 bg-white border-r flex flex-col">
+      <div class="px-4 py-2 flex items-center justify-between border-b">
+        <h2 class="text-lg font-semibold">Chats</h2>
+        <select id="filtro-departamento" class="border rounded px-2 py-1 text-sm">
+          <option value="">Todos</option>
+          <option value="Financeiro">Financeiro</option>
+          <option value="Suporte">Suporte</option>
+          <option value="Comercial">Comercial</option>
+        </select>
+      </div>
+      <ul id="lista-clientes" class="flex-1 overflow-y-auto"></ul>
+    </aside>
+
+    <!-- 💬 Conversa -->
+    <main class="flex-1 flex flex-col" id="chat-main">
+      <header id="topo-chat"
+              class="h-14 flex items-center px-4 border-b bg-gray-50 cursor-pointer">
+        <img id="chat-avatar" class="avatar mr-3" />
+        <h2 id="chat-title" class="font-medium"></h2>
+      </header>
+
+      <section id="historico"
+               class="flex-1 overflow-y-auto px-4 py-3
+                      bg-[url('https://i.imgur.com/4Y0aEhm.png')] bg-repeat">
+      </section>
+
+      <footer class="p-3 border-t bg-gray-50 flex gap-2">
+        <input id="mensagem" disabled placeholder="Digite sua resposta…"
+               class="flex-1 border rounded-lg px-4 py-2
+                      focus:outline-none focus:ring-1 focus:ring-emerald-600" />
+        <button id="btn-enviar"
+                class="bg-emerald-600 text-white px-5 rounded-lg disabled:opacity-50">
+          Enviar
+        </button>
+      </footer>
+    </main>
+  </div>
+
+  <!-- 🛈 Drawer de detalhes -->
+  <div id="drawer"
+       class="fixed right-0 top-0 h-full w-80 bg-white shadow-lg
+              transform translate-x-full transition-transform duration-300">
+    <button id="btn-close" class="absolute top-4 right-4 text-gray-500 text-xl">✕</button>
+    <div class="p-6 text-center">
+      <img id="drawer-avatar" class="avatar mx-auto mb-4" />
+      <h3 id="drawer-number" class="font-semibold"></h3>
+      <p  id="drawer-nome"   class="text-sm text-gray-500"></p>
+    </div>
+  </div>
+
+<script>
+/*--------------------------------------------------------------
+  Elementos & estado
+--------------------------------------------------------------*/
+const $ = s => document.querySelector(s);
+
+const lista       = $('#lista-clientes');
+const historico   = $('#historico');
+const inpMsg      = $('#mensagem');
+const btnEnviar   = $('#btn-enviar');
+const chatTitle   = $('#chat-title');
+let   chatAvatar  = $('#chat-avatar');      // será recriado ao trocar avatar
+const filtroDep   = $('#filtro-departamento');
+
+const drawer       = $('#drawer');
+const drawerAvatar = $('#drawer-avatar');
+const drawerNumber = $('#drawer-number');
+const drawerNome   = $('#drawer-nome');
+const btnClose     = $('#btn-close');
+
+const EMPRESA_ID = Number(localStorage.getItem('empresa_id'));
+if (!localStorage.getItem('nome_atendente'))  location.href = '/frontend/login.html';
+
+let clienteSel = null;
+let ultimaData = '';
+
+/*--------------------------------------------------------------
+  Helpers UI
+--------------------------------------------------------------*/
+function avatarHtml(c){
+  return c.avatar_url
+       ? `<img src="${c.avatar_url}" class="avatar" />`
+       : `<div class="avatar">${c.telefone.slice(-2)}</div>`;
+}
+
+function addDateChip(label){
+  const chip = document.createElement('div');
+  chip.className = 'date-chip';
+  chip.textContent = label;
+  historico.appendChild(chip);
+}
+
+function addBubble(texto, tipo, date){
+  // separador de dia
+  if (date){
+    const dia = date.toLocaleDateString();
+    if (dia !== ultimaData){
+      ultimaData = dia;
+      const hoje = new Date(); hoje.setHours(0,0,0,0);
+      const diff = Math.round((date - hoje) / 864e5);
+      const label = diff === 0 ? 'Hoje' : diff === -1 ? 'Ontem' : dia;
+      addDateChip(label);
+    }
+  }
+
+  const row = document.createElement('div');
+  row.className = `msg-row ${tipo === 'entrada' ? 'msg-in' : 'msg-out'}`;
+
+  const hora = date
+      ? date.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})
+      : '';
+  row.innerHTML = `
+      <span class="bubble">
+        ${texto}<span class="time">${hora}</span>
+      </span>`;
+
+  historico.appendChild(row);
+  historico.scrollTop = historico.scrollHeight;
+}
+
+function badgeHtml(q){
+  return q
+    ? `<span class="ml-2 inline-flex items-center justify-center
+               w-5 h-5 text-xs font-medium text-white
+               bg-emerald-600 rounded-full">${q}</span>`
+    : '';
+}
+
+/*--------------------------------------------------------------
+  Lista de clientes
+--------------------------------------------------------------*/
+async function carregarClientes(){
+  let url = `/atendimento/clientes?empresa_id=${EMPRESA_ID}`;
+  const dep = filtroDep.value;
+  if (dep) url += `&departamento=${dep}`;
+
+  const data = await fetch(url).then(r => r.json());
+  lista.innerHTML = '';
+
+  data.forEach(c => {
+    const li = document.createElement('li');
+    c._li = li;                                         // referência para highlight
+    li.className =
+      `px-3 py-2 cursor-pointer hover:bg-gray-100
+       ${clienteSel && c.id === clienteSel.id ? 'bg-gray-100' : ''}`;
+
+    li.innerHTML = `
+      <div class="flex items-center">
+        ${avatarHtml(c)}
+        <div class="flex-1 ml-3 overflow-hidden">
+          <div class="flex justify-between items-center">
+            <span class="font-medium truncate">
+              ${c.nome === 'Cliente' ? c.telefone : c.nome}
+            </span>
+            <span class="text-xs text-gray-400">${c.hora || ''}</span>
+          </div>
+          <div class="text-sm text-gray-500 truncate max-w-[160px]">
+            ${c.ultima_mensagem || ''}
+          </div>
+        </div>
+        ${badgeHtml(c.novas ? 1 : 0)}
+      </div>`;
+
+    li.onclick = () => selecionarCliente(c);
+    lista.appendChild(li);
+  });
+}
+
+/*--------------------------------------------------------------
+  Abrir conversa
+--------------------------------------------------------------*/
+async function selecionarCliente(c){
+  clienteSel = c;  ultimaData = '';
+
+  chatTitle.textContent = c.nome === 'Cliente' ? c.telefone : c.nome;
+  chatAvatar.outerHTML  = avatarHtml(c);     // recria elemento <img|div>
+  chatAvatar = $('#chat-avatar');
+
+  inpMsg.disabled = false;  inpMsg.focus();
+
+  // highlight
+  document.querySelectorAll('#lista-clientes li')
+          .forEach(li => li.classList.remove('bg-gray-100'));
+  c._li.classList.add('bg-gray-100');
+
+  await carregarHistorico(c.id);
+}
+
+/*--------------------------------------------------------------
+  Histórico
+--------------------------------------------------------------*/
+async function carregarHistorico(id){
+  if (!clienteSel || clienteSel.id !== id) return;
+
+  historico.innerHTML = '';
+  const msgs = await fetch(
+      `/atendimento/historico/${id}?empresa_id=${EMPRESA_ID}`).then(r=>r.json());
+
+  msgs.forEach(m => addBubble(
+      m.conteudo, m.tipo,
+      m.timestamp ? new Date(m.timestamp) : new Date()));
+}
+
+/*--------------------------------------------------------------
+  Enviar mensagem
+--------------------------------------------------------------*/
+btnEnviar.addEventListener('click', async () => {
+  const txt = inpMsg.value.trim();
+  if (!txt || !clienteSel) return;
+
+  inpMsg.value = '';
+  addBubble(txt, 'saida', new Date());
+
+  await fetch('/atendimento/enviar', {
+    method : 'POST',
+    headers: {'Content-Type':'application/json'},
+    body   : JSON.stringify({
+      cliente_id: clienteSel.id,
+      conteudo  : txt
+    })
+  });
+});
+
+filtroDep.addEventListener('change', carregarClientes);
+
+/*--------------------------------------------------------------
+  Drawer (detalhes do contato)
+--------------------------------------------------------------*/
+function abrirDrawer(){
+  if (!clienteSel) return;
+  drawerAvatar.src  = clienteSel.avatar_url || '/frontend/no-avatar.png';
+  drawerNumber.textContent = clienteSel.telefone;
+  drawerNome.textContent   = clienteSel.nome === 'Cliente' ? '' : clienteSel.nome;
+  drawer.classList.remove('translate-x-full');
+}
+function fecharDrawer(){ drawer.classList.add('translate-x-full'); }
+
+$('#topo-chat').addEventListener('click', abrirDrawer);
+btnClose      .addEventListener('click', fecharDrawer);
+
+/*--------------------------------------------------------------
+  WebSocket tempo-real
+--------------------------------------------------------------*/
+const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const sock  = new WebSocket(proto + location.host + '/ws/mensagens');
+
+sock.onmessage = ev => {
+  const d = JSON.parse(ev.data);
+
+  if (d.empresa_id !== EMPRESA_ID) return;          // empresa errada
+  if (d.origem     === 'atendente')  return;        // já exibimos
+
+  const mesma =
+        clienteSel &&
+        d.cliente_id === clienteSel.id &&
+        d.telefone   === clienteSel.telefone;
+
+  if (mesma) {
+    if (d.avatar_url && !clienteSel.avatar_url) {
+      clienteSel.avatar_url = d.avatar_url;
+      chatAvatar.outerHTML  = avatarHtml(clienteSel);
+      chatAvatar = $('#chat-avatar');
+    }
+    addBubble(d.mensagem, 'entrada',
+              d.timestamp ? new Date(d.timestamp) : new Date());
+  } else {
+    carregarClientes();   // atualiza badges
+  }
+};
+
+/*--------------------------------------------------------------
+  Init
+--------------------------------------------------------------*/
+carregarClientes();
+</script>
+</body>
+</html>
